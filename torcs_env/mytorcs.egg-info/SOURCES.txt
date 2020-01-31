@@ -1,0 +1,7 @@
+setup.py
+mytorcs/__init__.py
+mytorcs.egg-info/PKG-INFO
+mytorcs.egg-info/SOURCES.txt
+mytorcs.egg-info/dependency_links.txt
+mytorcs.egg-info/requires.txt
+mytorcs.egg-info/top_level.txt
