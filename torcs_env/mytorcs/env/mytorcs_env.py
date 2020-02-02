@@ -89,7 +89,7 @@ class MyTorcsEnv(gym.Env):
 
     #action的最后一维没有被使用
     def step(self, action, time=[0.0]):
-        self.steps += 1;
+        self.steps += 1
         action_list = [0.0, 0.3, 0.0]
         action_list.extend(time)
         

@@ -1,66 +1,98 @@
-import numpy as np
 import tensorflow as tf
 import gym
+import numpy as np
 import time
-import sys
-sys.path.append("../common")
+import mytorcs
+import tianshou as ts
 
-class DDPG(object):
-    def __init__(self, env, actor_critic=core.mlp_actor_critic, ac_kwargs=dict(), seed=0, 
-        steps_per_epoch=5000, epochs=100, replay_size=int(1e6), gamma=0.999, 
-        polyak=0.995, lr=7e-4, alpha=0.2, batch_size=100, start_steps=10000, 
-        max_ep_len=1000, logger_kwargs=dict(), save_freq=1):
-        pass
-def train(self):
-        """
-        Perform all SAC updates at the end of the trajectory.
-        This is a slight difference from the SAC specified in the
-        original paper.
-        """
-        logger = self.logger
-        ep_len, ep_ret = self._roll_out()
 
-        for j in range(ep_len):
-            batch = self.replay_buffer.sample_batch(self.batch_size)
-            feed_dict = {self.x_ph: batch['obs1'],
-                        self.x2_ph: batch['obs2'],
-                        self.a_ph: batch['acts'],
-                        self.r_ph: batch['rews'],
-                        self.d_ph: batch['done'],
-                        }
-            outs = self.sess.run(self.step_ops, feed_dict)
-            logger.store(LossPi=outs[0], LossQ1=outs[1], LossQ2=outs[2],
-                        LossV=outs[3], Q1Vals=outs[4], Q2Vals=outs[5],
-                        VVals=outs[6], LogPi=outs[7])
+if __name__ == '__main__':
+    env = gym.make('MyTorcs-v0')
+    observation_dim = env.observation_space.shape
+    action_dim = env.action_space.shape
 
-        logger.store(EpRet=ep_ret, EpLen=ep_len)
-        # if (epoch % save_freq == 0) or (epoch == epochs-1):
-        #     logger.save_state({'env': env}, None)
-        pass
-    def _roll_out(self):
-        '''
-        collect experience in env and update/log each epoch
-        '''
-        o, r, done, ep_ret, ep_len = self.env.reset(), 0, False, 0, 0
-        while not done:
-            """
-            Until start_steps have elapsed, randomly sample actions
-            from a uniform distribution for better exploration. Afterwards, 
-            use the learned policy. 
-            """
-            if self.t >= self.start_steps:
-                a = self.get_action(o)
-            else:
-                a = self.env.action_space.sample()
+    batch_size = 100
 
-            # Step the env
-            o2, r, done, _ = self.env.step(a)
-            ep_ret += r
-            ep_len += 1
-            # Store experience to replay buffer
-            self.replay_buffer.store(o, a, r, o2, done)
+    seed = 123
+    np.random.seed(seed)
+    tf.set_random_seed(seed)
+    env.seed(seed)
+    env.set_target_lane(2)
+    ### 1. build network with pure tf
+    observation_ph = tf.placeholder(tf.float32, shape=(None,) + observation_dim)
+    action_ph = tf.placeholder(tf.float32, shape=(None,) + action_dim)
 
-            o = o2
-            self.t += 1
+    def my_network():
+        net = tf.layers.dense(observation_ph, 400, activation=tf.nn.relu)
+        net = tf.layers.dense(net, 300, activation=tf.nn.relu)
+        action = tf.layers.dense(net, action_dim[0], activation=tf.nn.tanh)
 
-        return ep_len, ep_ret
+        action_value_input = tf.concat([observation_ph, action_ph], axis=1)
+        net = tf.layers.dense(action_value_input, 400, activation=tf.nn.relu)
+        net = tf.layers.dense(net, 300, activation=tf.nn.relu)
+        action_value = tf.layers.dense(net, 1, activation=None)
+
+        return action, action_value
+
+    ### 2. build policy, loss, optimizer
+    actor = ts.policy.Deterministic(my_network, observation_placeholder=observation_ph,                                  has_old_net=True)
+    critic = ts.value_function.ActionValue(my_network, observation_placeholder=observation_ph,
+                                        action_placeholder=action_ph, has_old_net=True)
+    soft_update_op = ts.get_soft_update_op(1e-2, [actor, critic])
+
+    critic_loss = ts.losses.value_mse(critic)
+    critic_optimizer = tf.train.AdamOptimizer(7e-4)
+    critic_train_op = critic_optimizer.minimize(critic_loss, var_list=list(critic.trainable_variables))
+
+    dpg_grads_vars = ts.opt.DPG(actor, critic)
+    actor_optimizer = tf.train.AdamOptimizer(7e-4)
+    actor_train_op = actor_optimizer.apply_gradients(dpg_grads_vars)
+
+    ### 3. define data collection
+    data_buffer = ts.data.VanillaReplayBuffer(capacity=1000000, nstep=1)
+
+    process_functions = [ts.data.advantage_estimation.ddpg_return(actor, critic)]
+
+    data_collector = ts.data.DataCollector(
+        env=env,
+        policy=actor,
+        data_buffer=data_buffer,
+        process_functions=process_functions,
+        managed_networks=[actor, critic]
+    )
+    ### 4. start training
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    max_score = 0
+    with tf.Session(config=config) as sess:
+        sess.run(tf.global_variables_initializer())
+        saver = tf.train.Saver(max_to_keep=5)
+        # assign actor to pi_old
+        actor.sync_weights()
+        critic.sync_weights()
+        start_time = time.time()
+        data_collector.collect(num_timesteps=10000)  # warm-up
+        for i in range(int(1e8)):
+            # collect data
+            data_collector.collect(num_episodes=5, episode_cutoff=1000)
+
+            # train critic
+            feed_dict = data_collector.next_batch(batch_size)
+            sess.run(critic_train_op, feed_dict=feed_dict)
+
+            # recompute action
+            data_collector.denoise_action(feed_dict)
+
+            # train actor
+            sess.run(actor_train_op, feed_dict=feed_dict)
+
+            # update target networks
+            sess.run(soft_update_op)
+
+            # test every 1000 training steps
+            if i % 50 == 0:
+                print('Step {}, elapsed time: {:.1f} min'.format(i, (time.time() - start_time) / 60))
+                score = ts.data.test_policy_in_env(actor, env, num_episodes=1, episode_cutoff=1000)
+                if score > max_score:
+                    saver.save(sess, "../model", global_step=i)
+                    max_score = score

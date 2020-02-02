@@ -95,9 +95,6 @@ class SAC(object):
 
             logger_kwargs (dict): Keyword args for EpochLogger.
         """
-
-
-
         self.logger = EpochLogger(**logger_kwargs)
         # self.logger.save_config(locals())
         self.save_freq = save_freq
@@ -291,7 +288,7 @@ if __name__ == '__main__':
     parser.add_argument('--env', type=str, default='MyTorcs-v0')
     parser.add_argument('--hid', type=int, default=300)
     parser.add_argument('--l', type=int, default=1)
-    parser.add_argument('--gamma', type=float, default=0.99)
+    parser.add_argument('--gamma', type=float, default=0.999)
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--exp_name', type=str, default='sac_1000_5')
