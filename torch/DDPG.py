@@ -232,6 +232,7 @@ def main():
         print("Collection Experience...")
         print("====================================")
         if args.load: agent.load()
+        max_r = 0
         for i in range(args.max_episode):
             state = env.reset()
             for t in count():
@@ -247,14 +248,15 @@ def main():
 
                 state = next_state
                 if done or t >= args.max_length_of_trajectory:
+                    if ep_r > max_r:
+                        max_r = ep_r
+                        agent.save()
                     agent.writer.add_scalar('ep_r', ep_r, global_step=i)
                     if i % args.print_log == 0:
                         print("Ep_i \t{}, the ep_r is \t{:0.2f}, the step is \t{}".format(i, ep_r, t))
                     ep_r = 0
                     break
 
-            if i % args.log_interval == 0:
-                agent.save()
             if len(agent.replay_buffer.storage) >= args.capacity-1:
                 agent.update()
 
