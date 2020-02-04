@@ -44,11 +44,10 @@ class MyTorcsController():
         l += [dist_to_mid[self.target_lane-1]]
         # self.cur_pos.append(l[20])
         # self.tar_pos.append(l[-1]*width)
-        dist_decay = np.exp(-10* abs(l[20]/width - l[-1]))
+        dist_decay = np.exp(-10 * abs(l[20]/width - l[-1]))
 
         #reward
-        r =( l[21]*np.cos(l[19]) ) *  (dist_decay) - 1
-
+        r = (l[21]*np.cos(l[19])) * (dist_decay) - 5
         # if self.time > 600 and l[21] < 10 :
         #     r = -10
         #     stuck = 1
@@ -66,10 +65,10 @@ class MyTorcsController():
         # Constrain
         # print("I'm at", l[20] , "with", np.cos(l[19]*3.1416))
         
-        if abs(l[20]) > 0.6 or np.cos(l[19]*3.1416) < -0.1:
+        if abs(l[20]) > 0.5 or np.cos(l[19]*3.1416) < -0.1:
             r = -10
             stuck = 1
-
+        
         self.time +=1
         
         l = tuple(l)

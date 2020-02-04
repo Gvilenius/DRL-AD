@@ -118,7 +118,6 @@ class MyTorcsEnv(gym.Env):
             self.viewer.take_action(action_list)
               
             observation, reward, done, info = self.viewer.observe(action_list)
-
             # fix broken pipe problem(for manual restart)
             if(info == -1 or done):
                 break
@@ -130,6 +129,7 @@ class MyTorcsEnv(gym.Env):
             
         if self.ADD_HISTORY:
             observation = np.concatenate((observation, self.command_history), axis=-1)
+            
         return observation, reward, done, info
 
     def reset(self,on_driving_reset=False):

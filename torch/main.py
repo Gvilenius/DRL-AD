@@ -3,10 +3,11 @@ import torch
 import gym
 import argparse
 import os
+import time
 
 import utils
 
-import DDPG, TD3
+import DDPG, TD3, SAC
 import mytorcs
 
 # Runs policy for X episodes and returns average reward
@@ -20,7 +21,7 @@ def eval_policy(policy, env_name, seed, eval_episodes=1):
     for _ in range(eval_episodes):
         state, done = eval_env.reset(), False
         timesteps = 0
-        while not done or timesteps < 4000:
+        while (not done) and timesteps < 8000:
             timesteps += 1
             action = policy.select_action(np.array(state))
             state, reward, done, _ = eval_env.step(action)
@@ -52,6 +53,7 @@ if __name__ == "__main__":
     parser.add_argument("--policy_freq", default=2, type=int)       # Frequency of delayed policy updates
     parser.add_argument("--save_model", action="store_true")        # Save model and optimizer parameters
     parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
+    parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
 
     file_name = f"{args.policy}_{args.env}_{args.seed}"
@@ -94,11 +96,12 @@ if __name__ == "__main__":
         policy = OurDDPG.DDPG(**kwargs)
     elif args.policy == "DDPG":
         policy = DDPG.DDPG(**kwargs)
-
+    elif args.policy == "SAC":
+        policy = SAC.SAC(**kwargs)
     if args.load_model != "":
         policy_file = file_name if args.load_model == "default" else args.load_model
         policy.load(f"./models/{policy_file}")
-        env.set_test()
+        # env.set_test()
 
     replay_buffer = utils.ReplayBuffer(state_dim, action_dim)
     
@@ -109,9 +112,11 @@ if __name__ == "__main__":
     episode_reward = 0
     episode_timesteps = 0
     episode_num = 0
-
+    start = time.time()
+    while args.test:
+        env.set_test()
+        eval_policy(policy, env, args.seed)
     for t in range(int(args.max_timesteps)):
-        
         episode_timesteps += 1
 
         # Select action randomly or according to policy
@@ -141,7 +146,7 @@ if __name__ == "__main__":
 
         if done: 
             # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-            print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
+            print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f} Time: {(time.time()-start)/60:.2f} min ")
             # Reset environment
             state, done = env.reset(), False
             episode_reward = 0
@@ -149,7 +154,7 @@ if __name__ == "__main__":
             episode_num += 1 
 
         # Evaluate episode
-        if (t + 1) % args.eval_freq == 0:
+        if (episode_num + 1) % 10 == 0:
             evaluations.append(eval_policy(policy, env, args.seed))
             np.save(f"./results/{file_name}", evaluations)
             if args.save_model: policy.save(f"./models/{file_name}")
