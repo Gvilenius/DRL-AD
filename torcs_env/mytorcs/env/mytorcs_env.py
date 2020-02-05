@@ -27,11 +27,10 @@ class MyTorcsEnv(gym.Env):
     BRAKE_MIN=0.0
     BRAKE_MAX=1.0
     VAL_PER_OBS = 26 #obs的维度 
-    ADD_HISTORY = True
+    ADD_HISTORY = False
 
     def __init__(self, port = 9999, frame_skip=2):
         
-
         print("starting MyTorcs env")
         self.port = ('127.0.0.1', port)
         self.viewer = MyTorcsController(time_step=0.05, port=self.port)
@@ -96,7 +95,7 @@ class MyTorcsEnv(gym.Env):
         #control steer and brake
         action_list[0] = action[0]
         action_list[1] = (action[1]+1)/2    # (-1, 1) => (0, 1)
-        
+        action_list[2] = (action[2]+1)/2
         if (self.command_history is not None):
           #  prev_steering = self.command_history[-2]
           #  max_diff = (self.MAX_STEERING_DIFF - 1e-5) * (self.STEER_LIMIT_RIGHT - self.STEER_LIMIT_LEFT)
