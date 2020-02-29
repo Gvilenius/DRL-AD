@@ -3,6 +3,7 @@ from collections import namedtuple
 from itertools import count
 import pickle
 
+import json
 import os, random
 import numpy as np
 import mytorcs
@@ -13,7 +14,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Normal
 from tensorboardX import SummaryWriter
-
+from torch.autograd import Variable
 
 '''
 Implementation of soft actor critic, dual Q network version 
@@ -27,14 +28,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--env_name", default="MyTorcs-v0")  # OpenAI gym environment name
 parser.add_argument('--tau',  default=0.005, type=float) # target smoothing coefficient
 parser.add_argument('--target_update_interval', default=1, type=int)
-parser.add_argument('--gradient_steps', default=1, type=int)
+parser.add_argument('--gradient_steps', default=10, type=int)
 
-parser.add_argument('--learning_rate', default=1e-3, type=float)
-parser.add_argument('--gamma', default=0.999, type=int) # discount gamma
+parser.add_argument('--learning_rate', default=3e-4, type=float)
+parser.add_argument('--gamma', default=0.9998, type=int) # discount gamma
 parser.add_argument('--capacity', default=100000, type=int) # replay buffer size
-parser.add_argument('--iteration', default=100000, type=int) #  num of  games
+parser.add_argument('--iteration', default=10000, type=int) #  num of  games
 parser.add_argument('--batch_size', default=128, type=int) # mini batch size
-parser.add_argument('--seed', default=1, type=int)
+parser.add_argument('--seed', default=1362, type=int)
 
 # optional parameters
 parser.add_argument('--num_hidden_layers', default=2, type=int)
@@ -57,7 +58,6 @@ np.random.seed(args.seed)
 
 state_dim = env.observation_space.shape[0]
 action_dim = env.action_space.shape[0]
-max_action = float(env.action_space.high[0])
 min_Val = torch.tensor(1e-7).float().to(device)
 
 class Replay_buffer():
@@ -92,11 +92,10 @@ class Replay_buffer():
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim=action_dim, min_log_std=-10, max_log_std=2):
         super(Actor, self).__init__()
-        self.fc1 = nn.Linear(state_dim, 256)
-        self.fc2 = nn.Linear(256, 512)
-        self.mu_head = nn.Linear(512, action_dim)
-        self.log_std_head = nn.Linear(512, action_dim)
-        self.max_action = max_action
+        self.fc1 = nn.Linear(state_dim, 400)
+        self.fc2 = nn.Linear(400, 300)
+        self.mu_head = nn.Linear(300, action_dim)
+        self.log_std_head = nn.Linear(300, action_dim)
 
         self.min_log_std = min_log_std
         self.max_log_std = max_log_std
@@ -174,6 +173,7 @@ class SAC():
         state = torch.FloatTensor(state).to(device)
         mu, log_sigma = self.policy_net(state)
         return torch.tanh(mu).detach().cpu().numpy()
+        
     def select_action(self, state):
         state = torch.FloatTensor(state).to(device)
         mu, log_sigma = self.policy_net(state)
@@ -183,6 +183,51 @@ class SAC():
         action = torch.tanh(z).detach().cpu().numpy()
         return action # return a scalar, float32
 
+    def perturb_action(self, s, epsilon = 0.01, method='fgsm', relative=False):
+        s = torch.FloatTensor(s.reshape(1, -1)).to(device)
+        state= Variable(s, requires_grad=True)
+        delta_s = None
+
+        if method == "random":
+            rand = (np.random.randint(0, 2, state.shape)*2 - 1).astype(np.float32)
+            if relative:
+                delta_s = state.mul(torch.tensor(rand)) * epsilon
+            else:
+                delta_s = torch.tensor(rand * epsilon)
+            state = (state + delta_s).clamp(-1, 1)
+        elif method == "fgsm":
+            Q1 = self.Q_net1(state, self.policy_net(state)[0])
+            Q1.backward()
+            g1 = state.grad
+            state = Variable(state, requires_grad=True)
+            Q2 = self.Q_net1(state, self.policy_net(state)[0].detach())
+            Q2.backward()
+            g2 = state.grad
+            g = g1 - g2
+            if relative:
+                delta_s = state.mul(g.sign()) * epsilon
+            else:
+                delta_s = g.sign() * epsilon 
+            state = (state + delta_s).clamp(-1, 1)
+        elif method == "i-fgsm":
+            for i in range(10):
+                state= Variable(state, requires_grad=True)
+                Q1 = self.critic_1(state, self.policy_net(state))
+                Q1.backward()
+                g1 = state.grad
+                state = Variable(state, requires_grad=True)
+                Q2 = self.critic_1(state, self.policy_net(state).detach())
+                Q2.backward()
+                g2 = state.grad
+                g = g1 - g2
+                if relative:
+                    delta_s = state.mul(g.sign()) * (epsilon/10)
+                else:
+                    delta_s = g.sign() * (epsilon/10)
+                state = (state + delta_s).clamp(-1, 1)
+
+
+        return self.policy_net(state)[0].cpu().data.numpy().flatten()
     def evaluate(self, state):
         batch_mu, batch_log_sigma = self.policy_net(state)
         batch_sigma = torch.exp(batch_log_sigma)
@@ -220,7 +265,7 @@ class SAC():
             Q1_loss = self.Q1_criterion(excepted_Q1, next_q_value.detach()).mean() # J_Q
             Q2_loss = self.Q2_criterion(excepted_Q2, next_q_value.detach()).mean()
 
-            pi_loss = (0.2*log_prob - excepted_new_Q).mean() # according to original paper
+            pi_loss = (log_prob - excepted_new_Q).mean() # according to original paper
 
             self.writer.add_scalar('Loss/V_loss', V_loss, global_step=self.num_training)
             self.writer.add_scalar('Loss/Q1_loss', Q1_loss, global_step=self.num_training)
@@ -271,42 +316,78 @@ class SAC():
         print("====================================")
         print("model has been loaded...")
         print("====================================")
-
+def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
+    agent.load()
+    res = dict()
+    rewards = []
+    ep_r = 0
+    for i in range(step_cnt):
+        perturbation = i*step
+        state = env.reset()
+        for t in count():
+            action = agent.perturb_action(state, perturbation, method=method, relative=relative)
+            next_state, reward, done, info = env.step(action)
+            ep_r += reward
+            if done:
+                print("ep_r is {} with epsilon {}".format(ep_r, perturbation))
+                rewards.append([perturbation, ep_r])
+                ep_r = 0
+                break
+            state = next_state
+    return rewards
 
 def main():
     agent = SAC()
-    if args.load: agent.load()
+    # if args.load: agent.load()
     print("====================================")
     print("Collection Experience...")
     print("====================================")
 
     ep_r = 0
-    for i in range(args.iteration):
-        state = env.reset()
-        for t in range(8000):
-            action = agent.select_action(state)
-            next_state, reward, done, info = env.step((action))
-            ep_r += reward
-            if args.render and i >= args.render_interval : env.set_test()
-            agent.replay_buffer.push(state, action, reward, next_state, done)
-
-            state = next_state
-            if done or t == 7999:
-                if agent.replay_buffer.num_transition >= args.capacity:
-                    agent.update()
-                    print("Ep_i \t{}, the ep_r is \t{}, the step is \t{}".format(i, ep_r, t))
-                break
-        if i %  args.log_interval == 0:
-            state, done, t , ep_r = env.reset(), False, 0, 0
-            while (not done) and t < 8000 :
-                next_state, reward, done, info = env.step(agent.act(state))
+    max_r = 0
+    perturb = False
+    if perturb:
+        res = dict()
+        methods = ["fgsm", "random"]
+        for m in methods:
+            res[m] = run_perturb(agent, m, step=0.005, step_cnt=20, relative=False)
+        with open("results/SAC", "w") as f:
+            json.dump(res, f)
+    else:
+        while True:
+            state = env.reset()
+            for t in range(8000):
+                action = env.action_space.sample()
+                next_state, reward, done, info = env.step(action)
+                agent.replay_buffer.push(state, action, reward, next_state, done)
                 state = next_state
+                if done:
+                    break
+            if agent.replay_buffer.num_transition >= args.capacity:
+                break
+
+        for i in range(args.iteration):
+            state = env.reset()
+            for t in range(8000):
+                action = agent.select_action(state)
+                next_state, reward, done, info = env.step((action))
                 ep_r += reward
-                t += 1
-            print("Test, the ep_r is \t{}, the step is \t{}".format(ep_r, t))
-            agent.save()
-        agent.writer.add_scalar('ep_r', ep_r, global_step=i)
-        ep_r = 0
+                if args.render and i >= args.render_interval : env.set_test()
+                agent.replay_buffer.push(state, action, reward, next_state, done)
+                state = next_state
+                if done or t == 7999:
+                    print("Ep_i \t{}, the ep_r is \t{}, the step is \t{}".format(i, ep_r, t))
+
+                    if ep_r > max_r and t > 800:
+                        agent.save()
+                        max_r = ep_r
+                    break
+
+            agent.update()
+
+
+            agent.writer.add_scalar('ep_r', ep_r, global_step=i)
+            ep_r = 0
 
 
 if __name__ == '__main__':

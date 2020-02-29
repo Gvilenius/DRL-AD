@@ -1,14 +1,17 @@
 import argparse
 from itertools import count
 
+import json
 import os, sys, random
 import numpy as np
-
+import json
 import gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torch.autograd as autograd
+from torch.autograd import Variable
 from torch.distributions import Normal
 from tensorboardX import SummaryWriter
 import mytorcs
@@ -28,12 +31,12 @@ parser.add_argument('--tau',  default=0.005, type=float) # target smoothing coef
 parser.add_argument('--target_update_interval', default=1, type=int)
 parser.add_argument('--test_iteration', default=10, type=int)
 
-parser.add_argument('--learning_rate', default=7e-4, type=float)
-parser.add_argument('--gamma', default=0.9998, type=int) # discounted factor
+parser.add_argument('--learning_rate', default=3e-4, type=float)
+parser.add_argument('--gamma', default=0.999, type=int) # discounted factor
 parser.add_argument('--capacity', default=100000, type=int) # replay buffer size
 parser.add_argument('--batch_size', default=64, type=int) # mini batch size
 parser.add_argument('--seed', default=False, type=bool)
-parser.add_argument('--random_seed', default=9527, type=int)
+parser.add_argument('--random_seed', default=6, type=int)
 # optional parameters
 
 parser.add_argument('--sample_frequency', default=256, type=int)
@@ -41,7 +44,7 @@ parser.add_argument('--render', default=False, type=bool) # show UI or not
 parser.add_argument('--log_interval', default=50, type=int) #
 parser.add_argument('--load', default=False, type=bool) # load model
 parser.add_argument('--render_interval', default=100, type=int) # after render_interval, the env.render() will work
-parser.add_argument('--exploration_noise', default=0.05, type=float)
+parser.add_argument('--exploration_noise', default=0.2, type=float)
 parser.add_argument('--max_episode', default=100000, type=int) # num of games
 parser.add_argument('--max_length_of_trajectory', default=8000, type=int) # num of games
 parser.add_argument('--print_log', default=5, type=int)
@@ -59,7 +62,6 @@ if args.seed:
 
 state_dim = env.observation_space.shape[0]
 action_dim = env.action_space.shape[0]
-max_action = float(env.action_space.high[0])
 min_Val = torch.tensor(1e-7).float().to(device) # min value
 
 directory = './exp' + script_name + args.env_name +'./'
@@ -98,19 +100,18 @@ class Replay_buffer():
 
 
 class Actor(nn.Module):
-    def __init__(self, state_dim, action_dim, max_action):
+    def __init__(self, state_dim, action_dim):
         super(Actor, self).__init__()
 
         self.l1 = nn.Linear(state_dim, 400)
         self.l2 = nn.Linear(400, 300)
         self.l3 = nn.Linear(300, action_dim)
 
-        self.max_action = max_action
 
     def forward(self, x):
         x = F.relu(self.l1(x))
         x = F.relu(self.l2(x))
-        x = self.max_action * torch.tanh(self.l3(x))
+        x = torch.tanh(self.l3(x))
         return x
 
 
@@ -129,10 +130,25 @@ class Critic(nn.Module):
         return x
 
 
+def run_test(agent, env, render=False):
+    ep_r, t = 0, 0
+    # if render: env.render()
+    state = env.reset()
+    gamma = 1
+    for t in count():
+        action = agent.select_action(state)
+        next_state, reward, done, info = env.step(np.float32(action))
+        ep_r += reward * gamma
+        gamma *= 0.999
+        t += 1
+        if done or t == 5000:
+            return ep_r, t
+        state = next_state
+    return 0, 0
 class DDPG(object):
-    def __init__(self, state_dim, action_dim, max_action):
-        self.actor = Actor(state_dim, action_dim, max_action).to(device)
-        self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
+    def __init__(self, state_dim, action_dim):
+        self.actor = Actor(state_dim, action_dim).to(device)
+        self.actor_target = Actor(state_dim, action_dim).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.actor_optimizer = optim.Adam(self.actor.parameters(), args.learning_rate)
 
@@ -146,8 +162,59 @@ class DDPG(object):
         self.num_actor_update_iteration = 0
         self.num_training = 0
 
-    def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+    def select_action(self, s):
+        s = torch.FloatTensor(s.reshape(1, -1)).to(device)
+        state= Variable(s, requires_grad=True)
+        return self.actor(state).cpu().data.numpy().flatten()
+    
+    def perturb_action(self, s, epsilon = 0.01, method='fgsm', relative=False):
+        s = torch.FloatTensor(s.reshape(1, -1)).to(device)
+        state= Variable(s, requires_grad=True)
+        delta_s = None
+
+        if method == "random":
+            rand = (np.random.randint(0, 2, state.shape)*2 - 1).astype(np.float32)
+            if relative:
+                delta_s = state.mul(torch.tensor(rand)) * epsilon
+            else:
+                delta_s = torch.tensor(rand * epsilon)
+            state = (state + delta_s).clamp(0, 1)
+        elif method == "fgsm":
+            Q1 = self.critic(state, self.actor(state))
+            Q1.backward()
+            g1 = state.grad
+            state = Variable(state, requires_grad=True)
+            Q2 = self.critic(state, self.actor(state).detach())
+            Q2.backward()
+            g2 = state.grad
+            g = g1 - g2
+            if relative:
+                delta_s = state.mul(g.sign()) * epsilon
+            else:
+                delta_s = g.sign() * epsilon 
+            state = (state + delta_s).clamp(0, 1)
+        else:
+            if method == "pgd":
+                rand = (np.random.randint(0, 2, state.shape)*2 - 1).astype(np.float32)
+                state = (state + torch.tensor(rand*epsilon)).clamp(0, 1)
+            for i in range(10):
+                state = Variable(state, requires_grad=True)
+
+                Q1 = self.critic(state, self.actor(state))
+                Q1.backward()
+                g1 = state.grad
+                state = Variable(state, requires_grad=True)
+                Q2 = self.critic(state, self.actor(state).detach())
+                Q2.backward()
+                g2 = state.grad
+                g = g1 - g2
+                if relative:
+                    delta_s = state.mul(g.sign()) * (epsilon/10)
+                else:
+                    delta_s = g.sign() * (epsilon/10)
+                state = (state + delta_s).clamp(0, 1)
+
+
         return self.actor(state).cpu().data.numpy().flatten()
 
     def update(self):
@@ -198,9 +265,9 @@ class DDPG(object):
     def save(self):
         torch.save(self.actor.state_dict(), directory + 'actor.pth')
         torch.save(self.critic.state_dict(), directory + 'critic.pth')
-        # print("====================================")
-        # print("Model has been saved...")
-        # print("====================================")
+        print("====================================")
+        print("Model has been saved...")
+        print("====================================")
 
     def load(self):
         self.actor.load_state_dict(torch.load(directory + 'actor.pth'))
@@ -209,59 +276,93 @@ class DDPG(object):
         print("model has been loaded...")
         print("====================================")
 
-def main():
-    agent = DDPG(state_dim, action_dim, max_action)
-    ep_r = 0
-    if args.mode == 'test':
-        agent.load()
-        for i in range(args.test_iteration):
+def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
+    res = dict()
+    rewards = []
+    iter_cnt = 1
+    if method in ['random', 'pgd']:
+        iter_cnt = 10
+    for i in range(step_cnt):
+        epi_rewards = []
+        for _ in range(iter_cnt):
+            ep_r = 0
+            perturbation = i*step
             state = env.reset()
             for t in count():
-                action = agent.select_action(state)
+                action = agent.perturb_action(state, perturbation, method=method, relative=relative)
                 next_state, reward, done, info = env.step(action)
                 ep_r += reward
-                env.set_test()
-                if done or t >= args.max_length_of_trajectory:
-                    print("Ep_i \t{}, the ep_r is \t{:0.2f}, the step is \t{}".format(i, ep_r, t))
+                if done:
+                    print("ep_r is {} with epsilon {}".format(ep_r, perturbation))
+                    epi_rewards.append(ep_r)
                     ep_r = 0
                     break
                 state = next_state
+        rewards.append([perturbation, np.mean(epi_rewards)])
+                
+    return rewards
 
+def main():
+    agent = DDPG(state_dim, action_dim)
+    ep_r = 0
+    if args.mode == 'perturb':
+        agent.load()
+        res = dict()
+        methods = ["fgsm", "i-fgsm", "pgd", "random"]
+        # methods=["pgd"]
+        for m in methods:
+            res[m] = run_perturb(agent, m, step=0.001, step_cnt=10, relative=False)
+        with open("results/DDPG", "w") as f:
+            json.dump(res, f)
+    elif args.mode == 'test':
+        agent.load()
+        run_test(agent, env, True)
     elif args.mode == 'train':
+        if args.load: agent.load()
+
         print("====================================")
         print("Collection Experience...")
+        while True:
+            state = env.reset()
+            for t in count():
+                action = agent.select_action(state)
+                action = (action + np.random.normal(0, args.exploration_noise, size=env.action_space.shape[0])).clip(-1,1)
+                next_state, reward, done, info = env.step(action)
+                agent.replay_buffer.push((state, next_state, action, reward, np.float(done)))
+                state = next_state
+                if done or t >= args.max_length_of_trajectory:
+                    break
+            if len(agent.replay_buffer.storage) >= args.capacity-1:
+                break
         print("====================================")
-        if args.load: agent.load()
-        max_r = 0
+        max_r = -500
         for i in range(args.max_episode):
             state = env.reset()
             for t in count():
                 action = agent.select_action(state)
-
-                # issue 3 add noise to action
-                action = (action + np.random.normal(0, args.exploration_noise, size=env.action_space.shape[0])).clip(
-                    env.action_space.low, env.action_space.high)
-
+                action = (action + np.random.normal(0, args.exploration_noise, size=env.action_space.shape[0])).clip(-1,1)
                 next_state, reward, done, info = env.step(action)
                 ep_r += reward
                 agent.replay_buffer.push((state, next_state, action, reward, np.float(done)))
 
                 state = next_state
                 if done or t >= args.max_length_of_trajectory:
-                    if ep_r > max_r:
-                        max_r = ep_r
-                        agent.save()
                     agent.writer.add_scalar('ep_r', ep_r, global_step=i)
-                    if i % args.print_log == 0:
-                        print("Ep_i \t{}, the ep_r is \t{:0.2f}, the step is \t{}".format(i, ep_r, t))
-                    ep_r = 0
+                    
                     break
+            agent.update()
 
-            if len(agent.replay_buffer.storage) >= args.capacity-1:
-                agent.update()
+            if i % args.print_log == 0:
+                ep_r, t = run_test(agent, env, False) 
+                if ep_r > max_r:
+                    max_r = ep_r
+                    agent.save()
+                print("Test Ep_i \t{}, the ep_r is \t{:0.2f}, the step is \t{}".format(i, ep_r, t))
+            ep_r = 0
 
     else:
         raise NameError("mode wrong!!!")
+    env.close()
 
 if __name__ == '__main__':
     main()

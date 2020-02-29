@@ -30,6 +30,11 @@ class MyTorcsController():
         self.target_lane = lane
 
     def calc(self, pos_info, time, stuck):
+        '''
+        l[0:19] -> 19 sensors
+        l[19]   ->angle 
+        l[20] -> tomid
+        '''
         tmp = 23
         width = pos_info[25] + pos_info[26]
         l = pos_info[0:19] + pos_info[23:25]  #sensor, angle, tomid
@@ -41,17 +46,13 @@ class MyTorcsController():
         #goal dist to mid 
         dist_to_mid = [-0.2, -0.1, 0, 0.1, 0.2]
         self.target_lane = 2
-        l += [dist_to_mid[self.target_lane-1]]
+        l += [self.target_lane / 4]
         # self.cur_pos.append(l[20])
         # self.tar_pos.append(l[-1]*width)
-        dist_decay = np.exp(-10 * abs(l[20]/width - l[-1]))
+        dist_decay = np.exp(-10 * abs(l[20]/width - 0.1*(l[-1]*4-2)))
 
         #reward
         r = (l[21]*np.cos(l[19])) * (dist_decay) - 5
-        # if self.time > 600 and l[21] < 10 :
-        #     r = -10
-        #     stuck = 1
-
         for i in range(19):
             l[i] = l[i]/200
 
@@ -60,8 +61,8 @@ class MyTorcsController():
         l[20] = l[20]/width   #tomiddle
         for i in range(21, 24):
             l[i] = l[i] * 3.6/300
-        l[24] = l[24]/10000
-
+            l[i] = (l[i] + 1) / 2
+        l[24] /= 10000
         # Constrain
         # print("I'm at", l[20] , "with", np.cos(l[19]*3.1416))
         
@@ -70,14 +71,17 @@ class MyTorcsController():
             stuck = 1
         
         self.time +=1
-        
-        l = tuple(l)
         self.last_length = self.current_length
         # if self.time == 2000:
         #     import matplotlib.pyplot as plt
         #     plt.plot(np.arange(len(self.cur_pos)), self.cur_pos)
         #     plt.plot(np.arange(len(self.tar_pos)), self.tar_pos)
         #     plt.savefig("pic.png")
+ 
+        l[19] += 0.5
+        l[20] = (l[20] + 1) / 2
+
+        l = tuple(np.clip(l, 0, 1))
         return r, l, stuck
 
     def wait_until_loaded(self):

@@ -27,12 +27,11 @@ class MyTorcsEnv(gym.Env):
     BRAKE_MIN=0.0
     BRAKE_MAX=1.0
     VAL_PER_OBS = 26 #obs的维度 
-    ADD_HISTORY = False
 
-    def __init__(self, port = 9999, frame_skip=2):
+    def __init__(self, frame_skip=2):
         
         print("starting MyTorcs env")
-        self.port = ('127.0.0.1', port)
+        self.port = ('127.0.0.1', 9999)
         self.viewer = MyTorcsController(time_step=0.05, port=self.port)
          # start simulation subprocess
         self.proc = MyTorcsProcess()
@@ -44,25 +43,16 @@ class MyTorcsEnv(gym.Env):
             print("Missing torcs environment var. you must start sim manually")
             self.exe_path = None
         
-        #port
-            
         #no render
         self.headless = True
         # start simulation com
 
-        self.command_history = None
-
-        if self.ADD_HISTORY:
-            self.command_history = np.zeros(20)
-            self.VAL_PER_OBS += 20
-
-        print(self.VAL_PER_OBS)
         # action_space
-        self.action_space = spaces.Box(low=np.array([self.STEER_LIMIT_LEFT, self.ACCELERATE_MIN, self.BRAKE_MIN]),
-            high=np.array([self.STEER_LIMIT_RIGHT, self.ACCELERATE_MAX, self.BRAKE_MAX]), dtype=np.float32 )
+        self.action_space = spaces.Box(low=np.array([self.STEER_LIMIT_LEFT, self.ACCELERATE_MIN]),
+            high=np.array([self.STEER_LIMIT_RIGHT, self.ACCELERATE_MAX]), dtype=np.float32 )
 
         # obs data
-        self.observation_space = spaces.Box(-10, 10, [self.VAL_PER_OBS], dtype=np.float32)
+        self.observation_space = spaces.Box(0, 1, [self.VAL_PER_OBS], dtype=np.float32)
 
         # simulation related variables.
         self.seed()
@@ -74,6 +64,9 @@ class MyTorcsEnv(gym.Env):
         self.steps = 0
 
     def set_test(self):
+        self.exe_path = "torcs"
+
+    def render(self):
         self.exe_path = "torcs"
         
     def __del__(self):
@@ -94,18 +87,9 @@ class MyTorcsEnv(gym.Env):
         
         #control steer and brake
         action_list[0] = action[0]
-        action_list[1] = (action[1]+1)/2    # (-1, 1) => (0, 1)
-        action_list[2] = (action[2]+1)/2
-        if (self.command_history is not None):
-          #  prev_steering = self.command_history[-2]
-          #  max_diff = (self.MAX_STEERING_DIFF - 1e-5) * (self.STEER_LIMIT_RIGHT - self.STEER_LIMIT_LEFT)
-         #   diff = np.clip(action[0] - prev_steering, -max_diff, max_diff)
-        #    action_list[0] = prev_steering + diff
-            self.command_history =  np.roll(self.command_history, shift=-2, axis=-1)
-            self.command_history[-2] = action[0]
-            self.command_history[-1] = action[1]
-      
-
+        action_list[1] = (action[1]+1)/2
+        # action_list[2] = action[2]
+    
         for i in range(self.frame_skip):
             #only brake in one of all skip
             if(i != 0):
@@ -113,7 +97,7 @@ class MyTorcsEnv(gym.Env):
             
             if(action_list[2] != 0.0):
                 action_list[1] = 0
-            
+                
             self.viewer.take_action(action_list)
               
             observation, reward, done, info = self.viewer.observe(action_list)
@@ -125,9 +109,6 @@ class MyTorcsEnv(gym.Env):
         if info == -1:
             done = True
             reward = -10
-            
-        if self.ADD_HISTORY:
-            observation = np.concatenate((observation, self.command_history), axis=-1)
             
         return observation, reward, done, info
 
@@ -144,9 +125,6 @@ class MyTorcsEnv(gym.Env):
         self.viewer.reset()
         
         observation, reward, done, info = self.viewer.observe(reset=True)
-        if self.ADD_HISTORY:
-            self.command_history = np.zeros(20)
-            observation = np.concatenate((observation, self.command_history), axis=-1)
         return observation
 
     def set_target_lane(self, lane):

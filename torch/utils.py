@@ -38,3 +38,40 @@ class ReplayBuffer(object):
             torch.FloatTensor(self.reward[ind]).to(self.device),
             torch.FloatTensor(self.not_done[ind]).to(self.device)
         )
+
+
+def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
+    agent.load()
+    res = dict()
+    rewards = []
+    ep_r = 0
+    for i in range(step_cnt):
+        perturbation = i*step
+        state = env.reset()
+        for t in count():
+            action = agent.perturb_action(state, perturbation, method=method, relative=relative)
+            next_state, reward, done, info = env.step(action)
+            ep_r += reward
+            if done:
+                print("ep_r is {} with epsilon {}".format(ep_r, perturbation))
+                rewards.append([perturbation, ep_r])
+                ep_r = 0
+                break
+            state = next_state
+    return rewards
+
+def run_test(agent, env, render=False):
+    ep_r, t = 0, 0
+    # if render: env.render()
+    state = env.reset()
+    gamma = 1
+    for t in count():
+        action = agent.select_action(state)
+        next_state, reward, done, info = env.step(np.float32(action))
+        ep_r += reward * gamma
+        gamma *= 0.999
+        t += 1
+        if done or t == 5000:
+            return ep_r, t
+        state = next_state
+    return 0, 0
