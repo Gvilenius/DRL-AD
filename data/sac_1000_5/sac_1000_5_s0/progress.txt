@@ -1,2 +1,0 @@
-Epoch	AverageEpRet	StdEpRet	MaxEpRet	MinEpRet	AverageTestEpRet	StdTestEpRet	MaxTestEpRet	MinTestEpRet	EpLen	TestEpLen	TotalEnvInteracts	LossV	Time 
-0	217.2772	0.0	217.2772	217.2772	81.75787	0.0	81.75787	81.75787	96.0	87.0	96	1.1376427	3.3708956241607666

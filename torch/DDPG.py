@@ -170,6 +170,7 @@ class DDPG(object):
     def perturb_action(self, s, epsilon = 0.01, method='fgsm', relative=False):
         s = torch.FloatTensor(s.reshape(1, -1)).to(device)
         state= Variable(s, requires_grad=True)
+        ori = Variable(s, requires_grad=False)
         delta_s = None
 
         if method == "random":
@@ -195,11 +196,9 @@ class DDPG(object):
             state = (state + delta_s).clamp(0, 1)
         else:
             if method == "pgd":
-                rand = (np.random.randint(0, 2, state.shape)*2 - 1).astype(np.float32)
-                state = (state + torch.tensor(rand*epsilon)).clamp(0, 1)
+                state = (state + torch.tensor(np.random.uniform(-epsilon, epsilon, state.shape))).type_as(state).clamp(0, 1)
             for i in range(10):
                 state = Variable(state, requires_grad=True)
-
                 Q1 = self.critic(state, self.actor(state))
                 Q1.backward()
                 g1 = state.grad
@@ -209,9 +208,10 @@ class DDPG(object):
                 g2 = state.grad
                 g = g1 - g2
                 if relative:
-                    delta_s = state.mul(g.sign()) * (epsilon/10)
+                    delta_s = state.mul(g.sign()) * epsilon
                 else:
-                    delta_s = g.sign() * (epsilon/10)
+                    delta_s = g.sign() * (epsilon)
+                    delta_s = (state + delta_s - ori).clamp(-epsilon, epsilon)
                 state = (state + delta_s).clamp(0, 1)
 
 
@@ -308,10 +308,10 @@ def main():
     if args.mode == 'perturb':
         agent.load()
         res = dict()
-        methods = ["fgsm", "i-fgsm", "pgd", "random"]
+        methods = ["pgd", "fgsm"]
         # methods=["pgd"]
         for m in methods:
-            res[m] = run_perturb(agent, m, step=0.001, step_cnt=10, relative=False)
+            res[m] = run_perturb(agent, m, step=0.001, step_cnt=8, relative=False)
         with open("results/DDPG", "w") as f:
             json.dump(res, f)
     elif args.mode == 'test':

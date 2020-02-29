@@ -1,7 +1,3 @@
-# import os
-# os.system("python ./DDPG.py --mode train")
-# os.system("python ./TD3.py --mode train")
-# os.system("python ./SAC.py")
 from matplotlib.pyplot import MultipleLocator
 import matplotlib.pyplot as plt
 import json
