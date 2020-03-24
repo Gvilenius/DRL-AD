@@ -26,10 +26,10 @@ class MyTorcsEnv(gym.Env):
     ACCELERATE_MAX = 1.0
     BRAKE_MIN=0.0
     BRAKE_MAX=1.0
-    VAL_PER_OBS = 26 #obs的维度 
+    VAL_PER_OBS = 25 #obs的维度 
 
     def __init__(self, frame_skip=2):
-        
+        # 
         print("starting MyTorcs env")
         self.port = ('127.0.0.1', 9999)
         self.viewer = MyTorcsController(time_step=0.05, port=self.port)
@@ -38,6 +38,8 @@ class MyTorcsEnv(gym.Env):
             
         try:
             self.exe_path = "torcs -r /home/v/projects/Self-driving/MyTorcsEnv/torcs/mytorcs/env/practice.xml"
+            # self.exe_path = "torcs -r /home/v/software/torcs-1.3.8-test1/src/raceman/quickrace.xml"
+            # self.exe_path = "torcs"
             # self.exe_path = "torcs -r /home/ljf/Desktop/Self-driving/MyTorcsEnv/torcs/mytorcs/env/practice.xml"
         except:
             print("Missing torcs environment var. you must start sim manually")
@@ -62,7 +64,7 @@ class MyTorcsEnv(gym.Env):
         #当车子被卡住的时候需要手动reset
         self.need_manual_reset = False
         self.steps = 0
-
+        self.start_step = random.randint(0, 100)
     def set_test(self):
         self.exe_path = "torcs"
 
@@ -84,12 +86,12 @@ class MyTorcsEnv(gym.Env):
         self.steps += 1
         action_list = [0.0, 0.3, 0.0]
         action_list.extend(time)
-        
         #control steer and brake
         action_list[0] = action[0]
-        action_list[1] = (action[1]+1)/2
+        action_list[1] = max(0.1, (action[1]+1)/2)
         # action_list[2] = action[2]
     
+        if (self.steps < self.start_step): action_list = [0, 0, 0, 0]
         for i in range(self.frame_skip):
             #only brake in one of all skip
             if(i != 0):
@@ -120,9 +122,18 @@ class MyTorcsEnv(gym.Env):
             print("Error to quit torcs")
             time.sleep(0.5)
 
-        self.proc.start(self.exe_path, headless=self.headless, port=self.port)
+        if(self.proc != None):
+            while(not self.proc.quit()):
+                print("cannot kill torcs")
+        
+        while True:
+            self.proc.start(self.exe_path, headless=self.headless, port=self.port)
+            if not self.viewer.reset():
+                break
+            else:
+                self.proc.quit()
+                print("cannot start torcs proc")
 
-        self.viewer.reset()
         
         observation, reward, done, info = self.viewer.observe(reset=True)
         return observation

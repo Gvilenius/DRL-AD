@@ -1,6 +1,5 @@
 import argparse
 from collections import namedtuple
-from itertools import count
 import json
 import os, sys, random
 import numpy as np
@@ -14,11 +13,13 @@ from torch.distributions import Normal
 from tensorboardX import SummaryWriter
 from torch.autograd import Variable
 
+from itertools import count
+from utils import run_perturb, run_test
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--mode', default='train', type=str) # mode = 'train' or 'test'
 parser.add_argument("--env_name", default="MyTorcs-v0")  # OpenAI gym environment name， BipedalWalker-v2
+parser.add_argument('--mode', default='train', type=str) # mode = 'train' or 'test'
 parser.add_argument('--tau',  default=0.005, type=float) # target smoothing coefficient
 parser.add_argument('--target_update_interval', default=1, type=int)
 parser.add_argument('--iteration', default=5, type=int)
@@ -319,8 +320,9 @@ def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
     return rewards
 def run_test(agent, env, render=False):
     ep_r, t = 0, 0
-    # if render: env.render()
+    if render: env.render()
     state = env.reset()
+
     gamma = 1
     for t in count():
         action = agent.select_action(state)
@@ -352,7 +354,7 @@ def main():
         print("Collection Experience...")
         print("====================================")
         if args.load: agent.load()
-        max_r = -500
+        max_r = -1000
         for i in range(args.num_iteration):
             state = env.reset()
             ep_r = 0
@@ -383,6 +385,6 @@ def main():
 
     else:
         raise NameError("mode wrong!!!")
-
+    env.close()
 if __name__ == '__main__':
     main()

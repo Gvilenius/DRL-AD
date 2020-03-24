@@ -210,10 +210,9 @@ class DDPG(object):
                 if relative:
                     delta_s = state.mul(g.sign()) * epsilon
                 else:
-                    delta_s = g.sign() * (epsilon)
+                    delta_s = g.sign() * epsilon/2
                     delta_s = (state + delta_s - ori).clamp(-epsilon, epsilon)
                 state = (state + delta_s).clamp(0, 1)
-
 
         return self.actor(state).cpu().data.numpy().flatten()
 
@@ -348,7 +347,6 @@ def main():
                 state = next_state
                 if done or t >= args.max_length_of_trajectory:
                     agent.writer.add_scalar('ep_r', ep_r, global_step=i)
-                    
                     break
             agent.update()
 

@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+from itertools import count
 
 class ReplayBuffer(object):
     def __init__(self, state_dim, action_dim, max_size=int(1e6)):
@@ -62,11 +63,11 @@ def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
 
 def run_test(agent, env, render=False):
     ep_r, t = 0, 0
-    # if render: env.render()
+    if render: env.render()
     state = env.reset()
     gamma = 1
     for t in count():
-        action = agent.select_action(state)
+        action = agent.act(state)
         next_state, reward, done, info = env.step(np.float32(action))
         ep_r += reward * gamma
         gamma *= 0.999

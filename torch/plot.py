@@ -29,8 +29,8 @@ def plot(a, method, label, smooth_step=1):
     plt.plot(x, y, label=label)
 
 algo = [TD3, DDPG, SAC]
-method = ["fgsm", "i-fgsm", "pgd", "random"]
-
+# method = ["fgsm", "i-fgsm", "pgd", "random"]
+method = ["fgsm", "pgd"]
 plt.xlabel("epsilon x 10^(-2)")
 plt.ylabel("rewards")
 for m in method:

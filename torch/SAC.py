@@ -2,7 +2,7 @@ import argparse
 from collections import namedtuple
 from itertools import count
 import pickle
-
+from utils import run_test
 import json
 import os, random
 import numpy as np
@@ -15,7 +15,6 @@ import torch.optim as optim
 from torch.distributions import Normal
 from tensorboardX import SummaryWriter
 from torch.autograd import Variable
-
 '''
 Implementation of soft actor critic, dual Q network version 
 Original paper: https://arxiv.org/abs/1801.01290
@@ -25,6 +24,7 @@ Not the author's implementation !
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 parser = argparse.ArgumentParser()
 
+parser.add_argument('--mode', default='train', type=str) # mode = 'train' or 'test'
 parser.add_argument("--env_name", default="MyTorcs-v0")  # OpenAI gym environment name
 parser.add_argument('--tau',  default=0.005, type=float) # target smoothing coefficient
 parser.add_argument('--target_update_interval', default=1, type=int)
@@ -316,25 +316,6 @@ class SAC():
         print("====================================")
         print("model has been loaded...")
         print("====================================")
-def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
-    agent.load()
-    res = dict()
-    rewards = []
-    ep_r = 0
-    for i in range(step_cnt):
-        perturbation = i*step
-        state = env.reset()
-        for t in count():
-            action = agent.perturb_action(state, perturbation, method=method, relative=relative)
-            next_state, reward, done, info = env.step(action)
-            ep_r += reward
-            if done:
-                print("ep_r is {} with epsilon {}".format(ep_r, perturbation))
-                rewards.append([perturbation, ep_r])
-                ep_r = 0
-                break
-            state = next_state
-    return rewards
 
 def main():
     agent = SAC()
@@ -346,7 +327,11 @@ def main():
     ep_r = 0
     max_r = 0
     perturb = False
-    if perturb:
+    if args.mode == "test":
+        agent.load()
+        r, t = run_test(agent, env, True)
+        print("{} {}".format(r, t))
+    elif args.mode == "perturb":
         res = dict()
         methods = ["fgsm", "random"]
         for m in methods:
@@ -376,15 +361,14 @@ def main():
                 agent.replay_buffer.push(state, action, reward, next_state, done)
                 state = next_state
                 if done or t == 7999:
-                    print("Ep_i \t{}, the ep_r is \t{}, the step is \t{}".format(i, ep_r, t))
-
-                    if ep_r > max_r and t > 800:
-                        agent.save()
-                        max_r = ep_r
                     break
 
             agent.update()
-
+            if i % 5 == 0:
+                ep_r, t = run_test(agent, env)
+                if ep_r > max_r and t > 800:
+                    agent.save()
+                    max_r = ep_r
 
             agent.writer.add_scalar('ep_r', ep_r, global_step=i)
             ep_r = 0
