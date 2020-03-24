@@ -41,7 +41,7 @@ class ReplayBuffer(object):
         )
 
 
-def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
+def run_perturb(agent,env, method, relative=False, step=0.005, step_cnt=20):
     agent.load()
     res = dict()
     rewards = []

@@ -15,6 +15,7 @@ from torch.autograd import Variable
 from torch.distributions import Normal
 from tensorboardX import SummaryWriter
 import mytorcs
+from utils import run_test, run_perturb
 '''
 Implementation of Deep Deterministic Policy Gradients (DDPG) with pytorch 
 riginal paper: https://arxiv.org/abs/1509.02971
@@ -130,21 +131,7 @@ class Critic(nn.Module):
         return x
 
 
-def run_test(agent, env, render=False):
-    ep_r, t = 0, 0
-    # if render: env.render()
-    state = env.reset()
-    gamma = 1
-    for t in count():
-        action = agent.select_action(state)
-        next_state, reward, done, info = env.step(np.float32(action))
-        ep_r += reward * gamma
-        gamma *= 0.999
-        t += 1
-        if done or t == 5000:
-            return ep_r, t
-        state = next_state
-    return 0, 0
+
 class DDPG(object):
     def __init__(self, state_dim, action_dim):
         self.actor = Actor(state_dim, action_dim).to(device)
@@ -275,42 +262,16 @@ class DDPG(object):
         print("model has been loaded...")
         print("====================================")
 
-def run_perturb(agent, method, relative=False, step=0.005, step_cnt=20):
-    res = dict()
-    rewards = []
-    iter_cnt = 1
-    if method in ['random', 'pgd']:
-        iter_cnt = 10
-    for i in range(step_cnt):
-        epi_rewards = []
-        for _ in range(iter_cnt):
-            ep_r = 0
-            perturbation = i*step
-            state = env.reset()
-            for t in count():
-                action = agent.perturb_action(state, perturbation, method=method, relative=relative)
-                next_state, reward, done, info = env.step(action)
-                ep_r += reward
-                if done:
-                    print("ep_r is {} with epsilon {}".format(ep_r, perturbation))
-                    epi_rewards.append(ep_r)
-                    ep_r = 0
-                    break
-                state = next_state
-        rewards.append([perturbation, np.mean(epi_rewards)])
-                
-    return rewards
-
 def main():
     agent = DDPG(state_dim, action_dim)
     ep_r = 0
     if args.mode == 'perturb':
         agent.load()
         res = dict()
-        methods = ["pgd", "fgsm"]
+        methods = ["random", "pgd", "fgsm"]
         # methods=["pgd"]
         for m in methods:
-            res[m] = run_perturb(agent, m, step=0.001, step_cnt=8, relative=False)
+            res[m] = run_perturb(agent, env, m, step=0.001, step_cnt=8, relative=False)
         with open("results/DDPG", "w") as f:
             json.dump(res, f)
     elif args.mode == 'test':
